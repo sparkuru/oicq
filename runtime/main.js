@@ -164,8 +164,17 @@
     const now = Date.now();
     if (now - lastRotateCheck < 60_000) return;
     lastRotateCheck = now;
+    // stat() on the data root is one of the paths the observation-surface layer
+    // answers with ENOENT, so size is read through a descriptor: open() is not
+    // part of the hidden surface.
     try {
-      const { size } = fs.statSync(paths.logFile);
+      const fd = fs.openSync(paths.logFile, 'r');
+      let size = 0;
+      try {
+        size = fs.fstatSync(fd).size;
+      } finally {
+        fs.closeSync(fd);
+      }
       if (size > 2 * 1024 * 1024) fs.renameSync(paths.logFile, `${paths.logFile}.1`);
     } catch {
       /* no file yet */
@@ -389,12 +398,14 @@
   // The UI script is pushed into the page from the main process. Nothing is
   // registered on the session: the reference implementation on Linux does the
   // same, and a session-level preload is an extra, host-visible surface.
+  // Existence is decided by the read itself: access()/stat() on the payload
+  // directory are answered with ENOENT by the observation-surface layer, while
+  // open() still resolves, so a probe would reject a file that reads fine.
   function rendererSource() {
     const candidates = [process.env.OICQ_RENDERER_PATH, path.join(__dirname, 'renderer.js')]
       .filter(Boolean);
     for (const candidate of candidates) {
       try {
-        fs.accessSync(candidate);
         return fs.readFileSync(candidate, 'utf8');
       } catch {
         continue;
