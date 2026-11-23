@@ -9,11 +9,9 @@ usage() {
     cat <<EOF
 Usage: $SCRIPT_NAME /path/to/oicq.so /path/to/linux-qq-dir
 
-Write qq.desktop in the current directory. The entry starts
-<linux-qq-dir>/qq with LD_PRELOAD pointing at oicq.so.
+Write qq.desktop in the current directory. The entry starts <linux-qq-dir>/qq with LD_PRELOAD pointing at oicq.so.
 
-Verified with QQNT Linux 3.2.18-37012 and 3.2.35-261103. Other versions are
-untested; check the anchors before relying on them.
+Verified with QQNT Linux 3.2.18-37012 and 3.2.35-54395. Other versions are untested; check the anchors before relying on them.
 EOF
 }
 

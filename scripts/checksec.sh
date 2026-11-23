@@ -434,30 +434,30 @@ check_runtime() {
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --no-runtime)
-                no_runtime=true
-                shift
-                ;;
-            -h | --help)
+        --no-runtime)
+            no_runtime=true
+            shift
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            usage
+            die "unknown option: $1"
+            ;;
+        *)
+            if [[ -n "$so_path" ]]; then
                 usage
-                exit 0
-                ;;
-            --)
-                shift
-                break
-                ;;
-            -*)
-                usage
-                die "unknown option: $1"
-                ;;
-            *)
-                if [[ -n "$so_path" ]]; then
-                    usage
-                    die "only one SO_PATH may be given"
-                fi
-                so_path=$1
-                shift
-                ;;
+                die "only one SO_PATH may be given"
+            fi
+            so_path=$1
+            shift
+            ;;
         esac
     done
 

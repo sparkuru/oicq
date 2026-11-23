@@ -14,7 +14,10 @@ ARCH="$(uname -m)"
 NAME="oicq-${VER}-linux-${ARCH}"
 OUT="$ROOT/dist/$NAME"
 
-[ -f build/oicq.so ] || { echo "build first: cmake --build build -j" >&2; exit 1; }
+[ -f build/oicq.so ] || {
+    echo "build first: cmake --build build -j" >&2
+    exit 1
+}
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
@@ -22,7 +25,7 @@ install -m 0755 build/oicq.so "$OUT/oicq.so"
 # Keep only .dynsym (needed for dlopen/interception); drop debug and internal symbol tables
 strip --strip-unneeded "$OUT/oicq.so"
 
-cat > "$OUT/README.txt" <<EOF
+cat >"$OUT/README.txt" <<EOF
 oicq ${VER} — QQNT injection extension framework (Linux ${ARCH})
 
 ## What this is
@@ -67,7 +70,7 @@ length and the match fails: you see "hook active" but no "anchor hit". Check the
 - x86_64 only; the macOS/Windows backends are in the source tree but not shipped in this package.
 EOF
 
-cat > "$OUT/install.sh" <<'EOF'
+cat >"$OUT/install.sh" <<'EOF'
 #!/usr/bin/env bash
 # oicq installer: locate QQ, smoke test, write the desktop entry (the original file is backed up)
 set -euo pipefail
@@ -156,7 +159,7 @@ say "logs: ~/.oicq/logs/runtime.log; troubleshooting: OICQ_LOG=debug"
 EOF
 chmod 0755 "$OUT/install.sh"
 
-cat > "$OUT/uninstall.sh" <<'EOF'
+cat >"$OUT/uninstall.sh" <<'EOF'
 #!/usr/bin/env bash
 # restore the most recent backup of the desktop entry
 set -euo pipefail
@@ -168,18 +171,18 @@ EOF
 chmod 0755 "$OUT/uninstall.sh"
 
 {
-  echo "name: oicq"
-  echo "version: $VER"
-  echo "arch: $ARCH"
-  echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "glibc_floor: 2.34"
-  echo "target_qq: 3.2.18-37012"
-  echo "sha256: $(sha256sum "$OUT/oicq.so" | cut -d' ' -f1)"
-  echo "size: $(stat -c%s "$OUT/oicq.so")"
-} > "$OUT/manifest.txt"
+    echo "name: oicq"
+    echo "version: $VER"
+    echo "arch: $ARCH"
+    echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "glibc_floor: 2.34"
+    echo "target_qq: 3.2.18-37012"
+    echo "sha256: $(sha256sum "$OUT/oicq.so" | cut -d' ' -f1)"
+    echo "size: $(stat -c%s "$OUT/oicq.so")"
+} >"$OUT/manifest.txt"
 
 tar -C "$ROOT/dist" -czf "$ROOT/dist/$NAME.tar.gz" "$NAME"
-( cd "$ROOT/dist" && sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256" )
+(cd "$ROOT/dist" && sha256sum "$NAME.tar.gz" >"$NAME.tar.gz.sha256")
 
 echo "== $OUT =="
 ls -la "$OUT"
