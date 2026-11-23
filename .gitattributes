@@ -1,0 +1,16 @@
+* text=auto eol=lf
+
+*.cc text diff=cpp
+*.h text diff=cpp
+*.js text
+*.json text
+*.md text
+*.py text
+*.sh text eol=lf
+CMakeLists.txt text
+
+*.so binary
+*.dylib binary
+*.dll binary
+*.gz binary
+*.png binary

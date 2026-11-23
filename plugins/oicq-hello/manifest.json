@@ -1,0 +1,19 @@
+{
+  "id": "oicq-hello",
+  "name": "示例插件",
+  "version": "1.0.0",
+  "description": "演示命令注册、宿主通知与自定义界面标签页",
+  "api": 2,
+  "main": "main.js",
+  "permissions": ["storage"],
+  "contributes": {
+    "renderer": "renderer.js",
+    "commands": [
+      {
+        "id": "hello.say",
+        "title": "打个招呼",
+        "hint": "在宿主日志与界面里各留一条记录"
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  global:
+    open; open64; openat; openat64; openat2;
+    fopen; freopen; close;
+    readlink; readlinkat;
+    stat; lstat; fstatat; statx; access; faccessat;
+    opendir; readdir; readdir64; scandir; scandir64;
+    dl_iterate_phdr; dlopen; getenv; secure_getenv;
+  local:
+    *;
+};

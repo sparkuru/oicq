@@ -1,0 +1,53 @@
+
+# spec
+
+
+# Build output
+build/
+dist/
+out/
+cmake-build-*/
+*.o
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+
+# Local runtime state
+.data/
+.devhome/
+logs/
+*.log
+*.pid
+
+# Reference samples and history (workspace-only)
+archive/
+
+# Experiment harness and its artefacts stay local
+experiments/
+
+# Local reverse-engineering container (hako image + wrapper)
+hako
+Dockerfile.hako
+.dockerignore
+
+# Design notes stay local; not part of the repository
+docs/
+
+# Editors and secrets
+.idea/
+.vscode/
+*.swp
+.DS_Store
+.env
+.env.*
+*.pem
+*.key
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Python tooling cache
+.ruff_cache/
