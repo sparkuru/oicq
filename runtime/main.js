@@ -22,7 +22,7 @@
   const path = require('path');
   const vm = require('vm');
 
-  const VERSION = '0.2.1';
+  const VERSION = '0.2.2';
   const API_VERSION = 2;
 
   const CHANNELS = {
