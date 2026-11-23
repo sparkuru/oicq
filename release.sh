@@ -33,7 +33,8 @@ With --version VERSION (three numeric components, such as 0.9.1), create a local
   1. bump the version in CMakeLists.txt and runtime/main.js;
   2. run the host test suite (native harnesses plus the Node.js runtime tests);
   3. rebuild and retest inside $BASE_IMAGE so the shipped .so only needs glibc >= $GLIBC_FLOOR;
-  4. write dist/VERSION with oicq/{oicq.so,install.sh,readme.txt}, a tarball, SHA-256 files and release notes;
+  4. write dist/VERSION with oicq/{oicq.so,install.sh,readme.txt}, a tarball, SHA-256 files and release notes,
+     and point dist/current at it;
   5. commit the version change, create an annotated tag, and print the GitHub release page fields. It does not push.
 
 --repo-url overrides the GitHub URL derived from the origin remote.
@@ -430,6 +431,30 @@ The library is self-contained apart from the C library. Portability comes from t
 EOF
 }
 
+# dist/current is a relative symlink to the newest release directory, so the
+# pointer keeps working when the tree is moved or copied.
+link_current() {
+    local link=$repo_root/dist/current
+    local current=
+
+    if [[ -L $link ]]; then
+        current=$(readlink -- "$link")
+        current=${current##*/}
+    elif [[ -e $link ]]; then
+        die "dist/current exists and is not a symlink: $link"
+    fi
+
+    # A re-release of an older version must not move the pointer backwards.
+    if [[ -n $current &&
+        $(printf '%s\n%s\n' "$current" "$release_version" | sort -V | tail -n 1) != "$release_version" ]]; then
+        note "dist/current stays at $current (newer than $release_version)"
+        return 0
+    fi
+
+    ln -sfn -- "$release_version" "$link"
+    note "dist/current -> $release_version"
+}
+
 commit_and_tag() {
     git -C "$repo_root" add -- release.sh install.sh CMakeLists.txt runtime/main.js
     files_staged=true
@@ -444,6 +469,7 @@ commit_and_tag() {
 
 print_release_info() {
     printf '\nRelease created locally at commit %s\n' "$(git -C "$repo_root" rev-parse --short HEAD)"
+    printf 'dist/current -> %s\n' "$release_version"
     if [[ -n $repo_url ]]; then
         printf 'Push first:\n  git push origin %s\n  git push origin %s\n' "$branch" "$tag"
         printf '\nNew release page: %s/releases/new?tag=%s&target=%s&title=oicq%%20%s\n' \
@@ -506,6 +532,7 @@ main() {
     verify_release
     package_release
     commit_and_tag
+    link_current
     print_release_info
 }
 
