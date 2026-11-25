@@ -616,6 +616,7 @@
 
   const oicqHandle = Object.freeze({
     version: boot.version,
+    bridgePort: boot.bridgePort || 0,
     toast,
     invoke: call,
     openPanel: () => togglePanel(true),

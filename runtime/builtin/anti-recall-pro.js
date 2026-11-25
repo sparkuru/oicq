@@ -259,6 +259,7 @@ module.exports = function activate(api, host) {
             type: 'recalled',
             msgId: message.msgId,
             mediaPath: pic && typeof pic.sourcePath === 'string' ? pic.sourcePath : '',
+            mediaUrl: pic && typeof pic.originImageUrl === 'string' ? pic.originImageUrl : '',
           });
         }
       } else if (!missed.has(message.msgId)) {
@@ -356,6 +357,102 @@ module.exports = function activate(api, host) {
       return { ok: true };
     },
   });
+  const download = (url, dest, hops = 0) => new Promise((resolve) => {
+    if (hops > 3) return resolve(false);
+    const lib = url.startsWith('https:') ? host.require('node:https') : host.require('node:http');
+    const req = lib.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        const next = new URL(res.headers.location, url).toString();
+        return resolve(download(next, dest, hops + 1));
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        return resolve(false);
+      }
+      const out = fs.createWriteStream(dest);
+      res.pipe(out);
+      out.on('finish', () => out.close(() => resolve(true)));
+      out.on('error', () => resolve(false));
+    });
+    req.on('error', () => resolve(false));
+    req.setTimeout(8000, () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+
+  api.commands.register({
+    id: 'anti-recall.clicklog',
+    title: '防撤回 Pro: 点击诊断',
+    run(payload) {
+      api.log('click target', JSON.stringify(payload));
+      return { ok: true };
+    },
+  });
+  let lastOpenId = '';
+  let lastOpenAt = 0;
+
+  api.commands.register({
+    id: 'anti-recall.open',
+    title: '防撤回 Pro: 打开图片',
+    async run(payload) {
+      const msgId = payload && payload.msgId;
+      const now = Date.now();
+      if (msgId === lastOpenId && now - lastOpenAt < 600) {
+        return { ok: true, deduped: true };
+      }
+      lastOpenId = msgId;
+      lastOpenAt = now;
+      api.log('open request', String(msgId));
+      const saved = msgId && cache.get(msgId);
+      const pic = saved && (saved.elements || [])
+        .map((element) => element && element.picElement)
+        .find(Boolean);
+      if (!pic) {
+        api.log('open failed', 'no-pic');
+        return { ok: false, error: 'no-pic' };
+      }
+      const candidates = [pic.oqSavedPath, pic.sourcePath].filter(Boolean);
+      for (const file of candidates) {
+        try {
+          if (fs.existsSync(file)) {
+            const error = await host.openPath(file);
+            if (error) {
+              api.log('open failed', error);
+              return { ok: false, error };
+            }
+            return { ok: true, path: file };
+          }
+        } catch {
+          /* keep trying */
+        }
+      }
+      api.log('open failed', 'missing-file', JSON.stringify(candidates));
+      return { ok: false, error: 'missing-file' };
+    },
+  });
+  api.commands.register({
+    id: 'anti-recall.recover',
+    title: '防撤回 Pro: 重新获取图片',
+    hint: '按 originImageUrl 下载到本地缓存',
+    async run(payload) {
+      const msgId = payload && payload.msgId;
+      const saved = msgId && cache.get(msgId);
+      const pic = saved && (saved.elements || [])
+        .map((element) => element && element.picElement)
+        .find(Boolean);
+      if (!pic) return { ok: false, error: 'no-pic' };
+      const ext = path.extname(pic.fileName || '') || '.jpg';
+      const dest = path.join(mediaDir, `${msgId}${ext}`);
+      if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
+        return { ok: true, path: dest };
+      }
+      if (!pic.originImageUrl) return { ok: false, error: 'no-url' };
+      const done = await download(pic.originImageUrl, dest);
+      return done ? { ok: true, path: dest } : { ok: false, error: 'download-failed' };
+    },
+  });
   api.commands.register({
     id: 'anti-recall.flush',
     title: '防撤回 Pro: 立即落盘',
@@ -377,8 +474,55 @@ module.exports = function activate(api, host) {
     '.oq-recall-badge-box{float:right;z-index:99;}',
     '.oq-recall-badge{padding:2px 6px;font-size:12px;opacity:.6;line-height:12px;margin-top:6px;display:inline;width:max-content;color:var(--on_bg_text,#999);}',
     '.oq-recalled-dim{opacity:.7 !important;border:2px solid var(--brand_standard,#5b8cff) !important;border-radius:6px;}',
+    '.ml-item[data-oq-recall-marked="1"] img{max-width:220px !important;max-height:220px !important;object-fit:contain;}',
+    '.oq-recall-badge-block{display:block;text-align:right;margin-top:4px;}',
   ].join('');
   document.head.appendChild(style);
+
+  const mediaPaths = new Map();
+  const mediaUrls = new Map();
+
+  const paintImage = (id) => {
+    const file = mediaPaths.get(id);
+    if (!file) return;
+    const row = document.getElementById(id);
+    if (!row) return;
+    const content = row.querySelector('.message-content') || row.querySelector('.msg-content-container');
+    if (!content) return;
+    if (content.querySelector('.oq-recall-img')) return;
+    const img = document.createElement('img');
+    img.className = 'oq-recall-img';
+    img.style.maxWidth = '220px';
+    img.style.maxHeight = '220px';
+    img.style.borderRadius = '8px';
+    img.style.cursor = 'zoom-in';
+    img.style.position = 'relative';
+    img.style.zIndex = '10';
+    img.style.pointerEvents = 'auto';
+    img.src = 'file://' + file;
+    img.onerror = () => {
+      img.onerror = null;
+      img.src = 'appimg://' + file;
+      img.onerror = () => {
+        img.onerror = null;
+        const remote = mediaUrls.get(id);
+        if (remote) {
+          fetch(remote).then((res) => res.blob()).then((blob) => {
+            img.src = URL.createObjectURL(blob);
+            return;
+          }).catch(() => {});
+        }
+        oicq.invoke('command:run', { id: 'anti-recall.recover', payload: { msgId: id } })
+          .then((result) => {
+            if (result && result.ok && result.value && result.value.ok && result.value.path) {
+              img.src = 'appimg://' + result.value.path;
+            }
+          })
+          .catch(() => {});
+      };
+    };
+    content.insertBefore(img, content.firstChild);
+  };
 
   const mark = (id) => {
     const row = document.getElementById(id);
@@ -386,31 +530,96 @@ module.exports = function activate(api, host) {
     if (row.dataset.oqRecallMarked === '1') return true;
     row.dataset.oqRecallMarked = '1';
     const content = row.querySelector('.message-content') || row.querySelector('.msg-content-container');
-    if (content && !content.querySelector('.oq-recall-badge-box')) {
+    const isPic = Boolean(row.querySelector('.mix-message__container--pic'));
+    if (isPic && row.dataset.oqRecallClick !== '1') {
+      row.dataset.oqRecallClick = '1';
+      const openFor = (event) => {
+        // Capture phase on the row: QQ's image container sits above our <img>
+        // and swallows the click, so any click inside a marked picture row
+        // opens the restored file.
+        window.__oqClicks = (window.__oqClicks || 0) + 1;
+        if (oicq.bridgePort) {
+          fetch('http://127.0.0.1:' + oicq.bridgePort + '/open?msgId=' + encodeURIComponent(id))
+            .then((res) => res.json())
+            .then((result) => {
+              if (!result || !result.ok) oicq.toast('无法打开图片: ' + ((result && result.error) || 'http'));
+            })
+            .catch((error) => oicq.toast('无法打开图片: ' + error));
+          return;
+        }
+        oicq.toast('点击命中，尝试打开图片');
+        oicq.invoke('command:run', { id: 'anti-recall.open', payload: { msgId: id } })
+          .then((result) => {
+            if (!result || !result.ok || !result.value || !result.value.ok) {
+              const reason = result && result.value ? result.value.error : 'invoke-failed';
+              oicq.toast('无法打开图片: ' + reason);
+            }
+          });
+      };
+      row.addEventListener('click', openFor, true);
+    }
+    if (content && !row.querySelector('.oq-recall-badge-box')) {
       const box = document.createElement('div');
-      box.className = 'oq-recall-badge-box';
+      box.className = isPic ? 'oq-recall-badge-block' : 'oq-recall-badge-box';
       const badge = document.createElement('span');
       badge.className = 'oq-recall-badge';
       badge.textContent = '(此消息已撤回)';
       box.appendChild(badge);
-      content.appendChild(box);
+      if (isPic) {
+        // Below the picture: floating inside the image would cover it.
+        (content.parentElement || content).appendChild(box);
+      } else {
+        content.appendChild(box);
+      }
     }
-    // ref dims avatar, text wrapper and canvas (images render to canvas)
+    // avatar, text wrapper and canvas are dimmed (images render to canvas)
     for (const el of row.querySelectorAll('.avatar, .message-content__wrapper, .canvas')) {
       el.classList.add('oq-recalled-dim');
     }
     return true;
   };
 
+  // Chat lists mutate constantly (typing, animations); coalesce re-marking to
+  // one pass per 250 ms instead of running on every mutation.
+  let scheduled = false;
   const observer = new MutationObserver(() => {
-    for (const id of marked) mark(id);
+    if (scheduled) return;
+    scheduled = true;
+    setTimeout(() => {
+      scheduled = false;
+      for (const id of marked) {
+        mark(id);
+        paintImage(id);
+      }
+    }, 250);
   });
   observer.observe(document.body, { childList: true, subtree: true });
+
+  document.addEventListener('click', (event) => {
+    const row = event.target && event.target.closest && event.target.closest('.ml-item');
+    if (!row) return;
+    oicq.invoke('command:run', {
+      id: 'anti-recall.clicklog',
+      payload: {
+        msgId: row.id,
+        cls: String((event.target.className && event.target.className.baseVal) || event.target.className || '').slice(0, 60),
+        tag: event.target.tagName,
+        marked: row.dataset.oqRecallMarked || '',
+      },
+    });
+  }, true);
+
+  window.__oqTestOpen = (id) => oicq.invoke('command:run', {
+    id: 'anti-recall.open', payload: { msgId: id },
+  });
 
   oicq.onMessage((payload) => {
     if (!payload || payload.type !== 'recalled' || !payload.msgId) return;
     marked.add(payload.msgId);
+    if (payload.mediaPath) mediaPaths.set(payload.msgId, payload.mediaPath);
+    if (payload.mediaUrl) mediaUrls.set(payload.msgId, payload.mediaUrl);
     mark(payload.msgId);
+    paintImage(payload.msgId);
   });
 })();
 `;

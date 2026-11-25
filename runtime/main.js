@@ -804,15 +804,27 @@
         return false;
       },
       openPath(file) {
+        const viaXdOpen = () => {
+          try {
+            const { spawn } = require('node:child_process');
+            const child = spawn('xdg-open', [String(file)], { detached: true, stdio: 'ignore' });
+            child.unref();
+            return Promise.resolve('');
+          } catch (error) {
+            return Promise.resolve(String(error && error.message));
+          }
+        };
+        // shell.openPath goes through DBus/portal and can stall for over a
+        // second before failing on Linux; xdg-open is immediate.
+        if (process.platform === 'linux') return viaXdOpen();
         try {
-          if (electron && electron.shell) {
-            electron.shell.openPath(String(file));
-            return true;
+          if (electron && electron.shell && typeof electron.shell.openPath === 'function') {
+            return electron.shell.openPath(String(file));
           }
         } catch (error) {
           log('warn', 'openPath failed:', error && error.message);
         }
-        return false;
+        return viaXdOpen();
       },
     };
   }
@@ -1168,6 +1180,41 @@
     'restore', 'unresponsive', 'responsive', 'session-end', 'destroyed',
   ]);
   let protocol = null;
+  let bridgePort = 0;
+
+  // Renderer → host fallback channel. The console protocol is enough for the
+  // panel, but a page inside a guest view does not always reach it; a loopback
+  // HTTP endpoint is boring and reliable for a single "open this file" call.
+  function startBridge() {
+    if (!electron || !electron.app || bridgePort) return;
+    try {
+      const http = require('node:http');
+      const server = http.createServer((req, res) => {
+        const url = new URL(req.url, 'http://127.0.0.1');
+        if (url.pathname !== '/open') {
+          res.writeHead(404).end();
+          return;
+        }
+        const msgId = url.searchParams.get('msgId') || '';
+        invoke({ type: 'command:run', id: 'anti-recall.open', payload: { msgId } })
+          .then((result) => {
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify(result));
+          })
+          .catch((error) => {
+            res.writeHead(500, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: String(error && error.message) }));
+          });
+      });
+      server.listen(0, '127.0.0.1', () => {
+        bridgePort = server.address().port;
+        log('info', 'bridge listening', bridgePort);
+      });
+      server.unref();
+    } catch (error) {
+      log('warn', 'bridge unavailable:', error && error.message);
+    }
+  }
 
   function eligibleWindow(contents) {
     if (!isMainUi(contents.getURL())) return null;
@@ -1192,6 +1239,7 @@
       version: VERSION,
       config,
       hash,
+      bridgePort,
       snippets: rendererSnippets(hash),
     })};`;
     contents
@@ -1662,15 +1710,17 @@
             .slice(0, 6),
           marked: Boolean(row.querySelector('.oq-recalled-bubble')),
         }));
-        const picRows = [...document.querySelectorAll('.ml-item.oq-recalled-bubble')]
+        const picRows = [...document.querySelectorAll('.ml-item')]
           .filter((row) => row.querySelector('.mix-message__container--pic'))
-          .slice(0, 5)
+          .slice(0, 6)
           .map((row) => {
             const img = row.querySelector('img');
             return {
               id: row.id,
-              src: img ? String(img.src || '').slice(0, 80) : '',
+              hasImg: Boolean(img),
+              src: img ? String(img.src || '').slice(0, 90) : '',
               w: img ? img.naturalWidth : 0,
+              badge: Boolean(row.querySelector('.oq-recall-badge')),
             };
           });
         const target = document.getElementById(${JSON.stringify(msgId)});
@@ -1693,6 +1743,40 @@
       } catch (error) {
         log('debug', 'mark self-test capture failed:', error && error.message);
       }
+      try {
+        const pageResult = await contents.executeJavaScript(
+          `window.__oqTestOpen ? window.__oqTestOpen(${JSON.stringify(msgId)}) : 'no-hook'`,
+        );
+        log('info', 'page invoke test', msgId, JSON.stringify(pageResult));
+      } catch (error) {
+        log('warn', 'page invoke test failed:', error && error.message);
+      }
+      try {
+        const clicked = await contents.executeJavaScript(`(() => {
+          let row = document.getElementById(${JSON.stringify(msgId)});
+          if (!row) {
+            row = [...document.querySelectorAll('.ml-item')]
+              .find((item) => item.querySelector('.mix-message__container--pic'));
+          }
+          if (!row) return 'no-row';
+          const target = row.querySelector('.image, .pic-element')
+            || row.querySelector('img') || row.querySelector('.message-content');
+          if (!target) return 'no-target';
+          target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+          return 'id:' + row.id + ' dispatched:' + (window.__oqClicks || 0);
+        })()`);
+        log('info', 'click self-test', msgId, clicked);
+      } catch (error) {
+        log('debug', 'click self-test failed:', error && error.message);
+      }
+      try {
+        const opened = await invoke({
+          type: 'command:run', id: 'anti-recall.open', payload: { msgId },
+        });
+        log('info', 'open self-test', msgId, JSON.stringify(opened));
+      } catch (error) {
+        log('debug', 'open self-test failed:', error && error.message);
+      }
       log('info', 'mark self-test', msgId, JSON.stringify(state));
     } catch (error) {
       log('warn', 'mark self-test failed:', error && error.message);
@@ -1705,6 +1789,7 @@
       log('info', 'OICQ_NO_UI=1: renderer UI disabled for this run');
       return;
     }
+    startBridge();
     try {
       protocol = require(path.join(__dirname, 'protocol.js'));
     } catch (error) {
