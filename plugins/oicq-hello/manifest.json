@@ -1,13 +1,16 @@
 {
   "id": "oicq-hello",
   "name": "示例插件",
-  "version": "1.0.0",
-  "description": "演示命令注册、宿主通知与自定义界面标签页",
+  "version": "1.1.0",
+  "description": "演示命令注册、拦截器、按路由渲染贡献与可拆卸生命周期",
   "api": 2,
   "main": "main.js",
   "permissions": ["storage"],
   "contributes": {
-    "renderer": "renderer.js",
+    "renderer": {
+      "*": "renderer.js",
+      "#/setting/settings": "settings.js"
+    },
     "commands": [
       {
         "id": "hello.say",

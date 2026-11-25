@@ -50,6 +50,11 @@ OICQ_DATA_DIR=$PWD/.data LD_PRELOAD=$PWD/build/oicq.so /path/to/qq
 | `OICQ_AUTOINIT` | `0` disables start-on-load |
 | `OICQ_UNSAFE_HOOK` | `1` allows "restore-then-repatch" on a non-relocatable prologue (refused by default) |
 | `OICQ_NO_UI` | `1` skips the renderer preload (keeps only the main-process host, for troubleshooting) |
+| `OICQ_KERNEL_HOOKS` | `1` installs the kernel-IPC bridge; builtin plugins that need it stay `unavailable` otherwise |
+
+On Linux QQ's own launcher strips unknown `OICQ_*` variables; use
+`config.json` -> `{"kernel":{"hooks":true}}` for the bridge and an isolated
+`HOME` for the data root when testing the real client.
 | `OICQ_VERBOSE_CONSOLE` | `1` also writes renderer info/verbose console output to runtime.log (warning/error only by default) |
 | `OICQ_FORCE_PRELOAD_RELOAD` | `1` allows one reload when a window missed the preload (no reload by default, to avoid signing out) |
 | `OICQ_SHIELD` | `0` disables the observation-surface consistency layer (enabled by default; verify with `scripts/checksec.sh`) |

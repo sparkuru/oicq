@@ -26,6 +26,7 @@
   const ACTION_PREFIX = '[oicq-action]';
   const transport = { seq: 0, pending: new Map() };
   const pushHandlers = new Set();
+  const pluginHandlers = new Set();
 
   function send(type, payload) {
     const id = ++transport.seq;
@@ -43,6 +44,16 @@
   };
 
   window.__oicq_push__ = (message) => {
+    if (message && message.kind === 'plugin') {
+      for (const handler of pluginHandlers) {
+        try {
+          handler(message.payload, message.id);
+        } catch (error) {
+          console.error('[oicq] plugin message handler', error);
+        }
+      }
+      return;
+    }
     for (const handler of pushHandlers) {
       try {
         handler(message);
@@ -59,6 +70,7 @@
     open: false,
     pluginRows: [],
     commands: [],
+    pipelines: [],
     logs: [],
     query: '',
   };
@@ -260,6 +272,7 @@
       state.config = next.config;
       state.pluginRows = next.plugins || [];
       state.commands = next.commands || [];
+      state.pipelines = next.pipelines || [];
     }
     render();
   }
@@ -285,6 +298,7 @@
       <div class="oq-kv"><span>版本</span><span>${boot.version}</span></div>
       <div class="oq-kv"><span>插件</span><span>${state.pluginRows.length}</span></div>
       <div class="oq-kv"><span>命令</span><span>${state.commands.length}</span></div>
+      <div class="oq-kv"><span>拦截器</span><span>${state.pipelines.reduce((n, item) => n + item.handlers.length, 0)}</span></div>
       <div class="oq-kv"><span>面板热键</span><span>${ui.hotkey || '—'}</span></div>
       <div class="oq-kv"><span>命令面板</span><span>${ui.palette || '—'}</span></div>
       <p class="oq-empty">注入点：V8 编译前改写源码；运行时：runtime/main.js。界面与交互全部由本文件实现。</p>
@@ -310,16 +324,24 @@
       row.querySelector('h4').textContent = `${plugin.name} · ${plugin.version}`;
       row.querySelector('p').textContent = plugin.description || plugin.id;
       const toggle = row.querySelector('.oq-switch');
-      const disabled = ((state.config.plugins || {}).disabled || []).includes(plugin.id);
-      toggle.classList.toggle('oq-on', !disabled);
+      // `enabled` is the switch, `loaded` is whether the instance is live.
+      // A disabled plugin stays in the list so it can be switched back on.
+      const on = plugin.enabled !== false;
+      toggle.classList.toggle('oq-on', on);
+      if (!plugin.loaded) row.style.opacity = '0.55';
       toggle.addEventListener('click', async () => {
-        const list = new Set(((state.config.plugins || {}).disabled) || []);
-        if (list.has(plugin.id)) list.delete(plugin.id);
-        else list.add(plugin.id);
-        await call('config:set', { patch: { plugins: { disabled: [...list] } } });
-        await call('plugin:reload');
-        toast(list.has(plugin.id) ? `已停用 ${plugin.id}` : `已启用 ${plugin.id}`);
-        refresh();
+        const enabling = !on;
+        // Live enable/disable: the host tears the plugin down (commands,
+        // listeners, interceptors) or loads it without reloading the rest.
+        const result = await call(enabling ? 'plugin:enable' : 'plugin:disable', {
+          id: plugin.id,
+        });
+        if (!result || !result.ok) {
+          toast(`失败: ${(result && result.error) || plugin.id}`);
+          return;
+        }
+        toast(`${enabling ? '已启用' : '已停用'} ${plugin.id}`);
+        await refresh();
       });
       body.appendChild(row);
     }
@@ -545,33 +567,83 @@
 
   // Plugin renderer snippets: each gets its own function scope plus a
   // read-only handle on the oicq UI, so a snippet cannot clobber the panel.
-  for (const snippet of boot.snippets || []) {
+  // The host may deliver more snippets later (route-scoped contributions), so
+  // installation is idempotent per `<id>#<key>` and tabs are reused by name.
+  const tabs = new Map(); // name -> {button, draw}
+  const installed = new Set();
+
+  function registerTab(name, draw) {
+    const existing = tabs.get(name);
+    if (existing) {
+      existing.draw = draw;
+      return existing.button;
+    }
+    const tab = document.createElement('button');
+    tab.className = 'oq-tab';
+    tab.textContent = name;
+    tab.addEventListener('click', () => {
+      const current = tabs.get(name);
+      state.active = 'custom';
+      root.querySelectorAll('.oq-tab').forEach((item) => item.classList.remove('oq-active'));
+      tab.classList.add('oq-active');
+      body.innerHTML = '';
+      if (current) current.draw(body);
+    });
+    root.querySelector('.oq-tabs').appendChild(tab);
+    tabs.set(name, { button: tab, draw });
+    return tab;
+  }
+
+  // Page-level styles. Plugins get one id per sheet so re-applying replaces the
+  // old one instead of stacking; `addStyle(id, '')` removes the effect.
+  const pageStyles = new Map();
+
+  function addStyle(id, css) {
+    const key = String(id || 'default');
+    let element = pageStyles.get(key);
+    if (!css) {
+      if (element) element.textContent = '';
+      return;
+    }
+    if (!element) {
+      element = document.createElement('style');
+      element.setAttribute('data-oicq', key);
+      document.head.appendChild(element);
+      pageStyles.set(key, element);
+    }
+    element.textContent = String(css);
+  }
+
+  const oicqHandle = Object.freeze({
+    version: boot.version,
+    toast,
+    invoke: call,
+    openPanel: () => togglePanel(true),
+    closePanel: () => togglePanel(false),
+    registerTab,
+    addStyle,
+    // Receive payloads pushed by this plugin's main-process half.
+    onMessage: (handler) => {
+      pluginHandlers.add(handler);
+      return () => pluginHandlers.delete(handler);
+    },
+  });
+
+  function installSnippet(snippet) {
+    if (!snippet || typeof snippet.id !== 'string' || typeof snippet.source !== 'string') return;
+    const key = `${snippet.id}#${snippet.key || '*'}`;
+    if (installed.has(key)) return;
+    installed.add(key);
     try {
       // eslint-disable-next-line no-new-func
-      new Function('oicq', snippet.source)(Object.freeze({
-        version: boot.version,
-        toast,
-        invoke: call,
-        openPanel: () => togglePanel(true),
-        closePanel: () => togglePanel(false),
-        registerTab: (name, draw) => {
-          const tab = document.createElement('button');
-          tab.className = 'oq-tab';
-          tab.textContent = name;
-          tab.addEventListener('click', () => {
-            state.active = 'custom';
-            root.querySelectorAll('.oq-tab').forEach((item) => item.classList.remove('oq-active'));
-            tab.classList.add('oq-active');
-            body.innerHTML = '';
-            draw(body);
-          });
-          root.querySelector('.oq-tabs').appendChild(tab);
-        },
-      }));
+      new Function('oicq', snippet.source)(oicqHandle);
     } catch (error) {
       console.error(`[oicq] renderer snippet ${snippet.id}`, error);
     }
   }
+
+  window.__oicq_contrib__ = installSnippet;
+  for (const snippet of boot.snippets || []) installSnippet(snippet);
 
   if (state.config.ui && state.config.ui.autoOpen) togglePanel(true);
   refresh();

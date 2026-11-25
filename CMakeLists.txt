@@ -15,6 +15,10 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(OICQ_RUNTIME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/runtime)
 set(OICQ_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/resources_gen.cc)
 
+# Embedding must rerun when a builtin changes, not only on main.js.
+file(GLOB OICQ_BUILTIN_SOURCES CONFIGURE_DEPENDS
+     ${OICQ_RUNTIME_DIR}/builtin/*.js)
+
 add_custom_command(
   OUTPUT ${OICQ_GENERATED}
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/embed_runtime.py
@@ -24,6 +28,8 @@ add_custom_command(
           ${OICQ_RUNTIME_DIR}/minimal.js
           ${OICQ_RUNTIME_DIR}/protocol.js
           ${OICQ_RUNTIME_DIR}/renderer.js
+          ${OICQ_RUNTIME_DIR}/kernel.js
+          ${OICQ_BUILTIN_SOURCES}
           ${CMAKE_CURRENT_SOURCE_DIR}/scripts/embed_runtime.py
   COMMENT "Embedding oicq runtime"
   VERBATIM)
@@ -112,8 +118,12 @@ if(BUILD_TESTING)
              COMMAND ${OICQ_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_smoke.js)
     add_test(NAME protocol_test
              COMMAND ${OICQ_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/protocol_test.js)
+    add_test(NAME kernel_test
+             COMMAND ${OICQ_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/kernel_test.js)
+    add_test(NAME anti_recall_pro_test
+             COMMAND ${OICQ_NODE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/anti_recall_pro_test.js)
   else()
-    message(STATUS "node not found; runtime_smoke test skipped")
+    message(STATUS "node not found; JavaScript tests skipped")
   endif()
 endif()
 

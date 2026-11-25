@@ -1,0 +1,12 @@
+{
+  "id": "your-plugin",
+  "name": "你的插件",
+  "version": "0.1.0",
+  "description": "一句话说明这个插件做什么",
+  "api": 2,
+  "main": "main.js",
+  "permissions": [],
+  "contributes": {
+    "renderer": "renderer.js"
+  }
+}

@@ -20,7 +20,21 @@ PAYLOAD = [
     ("minimal.cjs", "minimal.js"),
     ("protocol.js", "protocol.js"),
     ("renderer.js", "renderer.js"),
+    ("kernel.js", "kernel.js"),
 ]
+
+
+def builtin_payload(runtime_dir: pathlib.Path) -> list[tuple[str, str]]:
+    """builtin/<name>.js -> builtin-<name>.cjs, flat on purpose.
+
+    The native side writes every embedded file into one directory, so a nested
+    layout would need directory creation there. A flat prefix keeps the payload
+    contract unchanged and the loader can enumerate it with one readdir.
+    """
+    out: list[tuple[str, str]] = []
+    for path in sorted((runtime_dir / "builtin").glob("*.js")):
+        out.append((f"builtin-{path.stem}.cjs", f"builtin/{path.name}"))
+    return out
 
 
 def emit_bytes(identifier: str, data: bytes) -> list[str]:
@@ -48,7 +62,8 @@ def main() -> int:
         "namespace {",
     ]
     table: list[str] = []
-    for index, (name, source_name) in enumerate(PAYLOAD):
+    payload = PAYLOAD + builtin_payload(runtime_dir)
+    for index, (name, source_name) in enumerate(payload):
         source = runtime_dir / source_name
         if not source.is_file():
             raise SystemExit(f"missing runtime file: {source}")
@@ -57,7 +72,7 @@ def main() -> int:
         table.append(f'    {{"{name}", {identifier}, {identifier}Size}},')
 
     body.append("")
-    body.append("constexpr std::size_t kFileCount = " + str(len(PAYLOAD)) + ";")
+    body.append("constexpr std::size_t kFileCount = " + str(len(payload)) + ";")
     body.append("const EmbeddedFile kFiles[kFileCount] = {")
     body.extend(table)
     body.append("};")
@@ -75,7 +90,7 @@ def main() -> int:
     temp_path = out_path.with_suffix(out_path.suffix + ".tmp")
     temp_path.write_text("\n".join(body), encoding="utf-8")
     temp_path.replace(out_path)
-    sizes = ", ".join(f"{name}={ (runtime_dir / src).stat().st_size }" for name, src in PAYLOAD)
+    sizes = ", ".join(f"{name}={ (runtime_dir / src).stat().st_size }" for name, src in payload)
     print(f"embedded runtime: {sizes} -> {args.out}")
     return 0
 
